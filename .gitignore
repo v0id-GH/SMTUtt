@@ -1,0 +1,36 @@
+# Android & Gradle
+.gradle/
+build/
+app/build/
+android/app/build/
+android/.gradle/
+*.apk
+*.aab
+
+# Local properties & secrets (NEVER commit signing keys or SDK paths!)
+local.properties
+android/local.properties
+*.jks
+*.keystore
+*.key
+google-services.json
+
+# IDE & Editor files
+.idea/
+android/.idea/
+*.iml
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Python & Backend
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env

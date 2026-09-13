@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">СПбГМТУ Расписание</string>
+    <string name="title_schedule">Расписание</string>
+    <string name="title_groups">Группы</string>
+    <string name="title_teachers">Преподаватели</string>
+    <string name="title_favorites">Избранное</string>
+    <string name="search_group_hint">Номер группы (например, 10274)</string>
+    <string name="search_teacher_hint">Фамилия преподавателя (например, Альбаев)</string>
+    <string name="week_upper">Верхняя неделя</string>
+    <string name="week_lower">Нижняя неделя</string>
+    <string name="week_all">Все недели</string>
+    <string name="offline_badge">Офлайн-режим</string>
+    <string name="online_badge">Обновлено</string>
+    <string name="save_offline">Сохранить офлайн</string>
+    <string name="saved_offline">Сохранено офлайн</string>
+    <string name="no_lessons">В этот день занятий нет</string>
+</resources>
