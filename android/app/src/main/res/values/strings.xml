@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">СПбГМТУ Расписание</string>
+    <string name="app_name">Расписание</string>
     <string name="title_schedule">Расписание</string>
     <string name="title_groups">Группы</string>
     <string name="title_teachers">Преподаватели</string>
