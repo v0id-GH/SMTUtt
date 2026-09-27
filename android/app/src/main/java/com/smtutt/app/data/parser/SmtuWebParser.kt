@@ -29,22 +29,58 @@ object SmtuWebParser {
         val doc: Document = Jsoup.parse(htmlContent)
         val facultiesData = mutableListOf<FacultyInfo>()
 
-        val sections = doc.select("section.schedule-group-section")
-        for (sec in sections) {
-            val h2 = sec.select("h2, h3").firstOrNull()
-            val facName = h2?.text()?.trim() ?: "Без названия"
+        // 1. Live layout on smtu.ru: <h3>Faculty Name</h3> followed by group links in subsequent elements
+        val h3Elements = doc.select("h3")
+        for (h3 in h3Elements) {
+            val facName = h3.text().trim()
+            if (facName.isBlank()) continue
 
-            val coursesData = mutableListOf<CourseInfo>()
-            var courseCols = sec.select(".schedule-course-column, .schedule-course-grid, .schedule-course-col")
-            if (courseCols.isEmpty()) {
-                courseCols = org.jsoup.select.Elements(sec)
+            val groups = mutableListOf<GroupInfo>()
+            val seenIds = mutableSetOf<String>()
+
+            var sibling = h3.nextElementSibling()
+            while (sibling != null && !sibling.tagName().equals("h3", ignoreCase = true)) {
+                val links = sibling.select("a[href*=/viewschedule_new/], a[href*=/viewschedule/]")
+                for (a in links) {
+                    val href = a.attr("href")
+                    val id = href.trim('/').split('/').lastOrNull() ?: ""
+                    val name = a.text().trim()
+                    if (id.isNotBlank() && name.isNotBlank() && seenIds.add(id)) {
+                        groups.add(
+                            GroupInfo(
+                                id = id,
+                                name = name,
+                                url = href
+                            )
+                        )
+                    }
+                }
+                sibling = sibling.nextElementSibling()
             }
 
-            for (col in courseCols) {
-                val courseHeader = col.select(".schedule-course-title, h4, h5").firstOrNull()
-                val courseName = courseHeader?.text()?.trim() ?: "Курс"
+            if (groups.isNotEmpty()) {
+                facultiesData.add(
+                    FacultyInfo(
+                        faculty = facName,
+                        courses = listOf(
+                            CourseInfo(
+                                course = "Группы",
+                                groups = groups
+                            )
+                        )
+                    )
+                )
+            }
+        }
 
-                val groupLinks = col.select("a.gr-link, a[href*=/ru/viewschedule_new/]")
+        // 2. Fallback: section.schedule-group-section
+        if (facultiesData.isEmpty()) {
+            val sections = doc.select("section.schedule-group-section, section")
+            for (sec in sections) {
+                val h2 = sec.select("h2, h3").firstOrNull()
+                val facName = h2?.text()?.trim() ?: "Без названия"
+
+                val groupLinks = sec.select("a.gr-link, a[href*=/ru/viewschedule_new/], a[href*=/viewschedule/]")
                 val groups = mutableListOf<GroupInfo>()
                 val seenIds = mutableSetOf<String>()
 
@@ -65,21 +101,19 @@ object SmtuWebParser {
                 }
 
                 if (groups.isNotEmpty()) {
-                    coursesData.add(
-                        CourseInfo(
-                            course = courseName,
-                            groups = groups
+                    facultiesData.add(
+                        FacultyInfo(
+                            faculty = facName,
+                            courses = listOf(
+                                CourseInfo(
+                                    course = "Группы",
+                                    groups = groups
+                                )
+                            )
                         )
                     )
                 }
             }
-
-            facultiesData.add(
-                FacultyInfo(
-                    faculty = facName,
-                    courses = coursesData
-                )
-            )
         }
 
         return facultiesData
@@ -87,7 +121,7 @@ object SmtuWebParser {
 
     fun extractSearchKey(htmlContent: String): String? {
         val doc: Document = Jsoup.parse(htmlContent)
-        val input = doc.select("form[action*=/ru/searchschedule/] input[name=search_key]").firstOrNull()
+        val input = doc.select("form[action*=/ru/searchschedule/] input[name=search_key], input[name=search_key]").firstOrNull()
         return input?.attr("value")?.trim()
     }
 
@@ -96,7 +130,7 @@ object SmtuWebParser {
         val results = mutableListOf<TeacherSearchResult>()
         val seenIds = mutableSetOf<String>()
 
-        val links = doc.select("ul.schedule-search-results a, a[href*=/ru/viewschedule_new/teacher/]")
+        val links = doc.select("ul.schedule-search-results a, a[href*=/viewschedule_new/teacher/], a[href*=/viewschedule/teacher/], a[href*=/teacher/]")
         for (a in links) {
             val tName = a.text().trim()
             val href = a.attr("href")
@@ -139,10 +173,16 @@ object SmtuWebParser {
             extractedTitle = if (isTeacher) "Преподаватель $entityId" else "Группа $entityId"
         }
 
-        // 2. Day blocks
-        var dayBlocks = doc.select("#table-container .js-day-block")
+        // 2. Day blocks: cards with tables inside #table-container or directly in doc
+        var dayBlocks = doc.select("#table-container .card")
         if (dayBlocks.isEmpty()) {
-            dayBlocks = doc.select(".js-day-block")
+            dayBlocks = doc.select(".card:has(table)")
+        }
+        if (dayBlocks.isEmpty()) {
+            dayBlocks = doc.select("#table-container .js-day-block, .js-day-block")
+        }
+        if (dayBlocks.isEmpty()) {
+            dayBlocks = doc.select("table:has(tr)")
         }
 
         val daysList = mutableListOf<DaySchedule>()
@@ -156,7 +196,7 @@ object SmtuWebParser {
                 dayName = words[0]
             }
 
-            val table = block.select("table").firstOrNull() ?: continue
+            val table = if (block.tagName().equals("table", ignoreCase = true)) block else block.select("table").firstOrNull() ?: continue
             val rows = table.select("tr")
             val lessons = mutableListOf<Lesson>()
 
@@ -172,21 +212,55 @@ object SmtuWebParser {
                 val tds = tr.select("td")
                 if (tds.isEmpty()) continue
 
-                val weekType = if (tds.size > 0) tds[0].text().trim() else ""
-                val dates = if (tds.size > 1) tds[1].text().trim() else ""
-                val classroom = if (tds.size > 2) tds[2].text().trim() else ""
-                val group = if (tds.size > 3) tds[3].text().trim() else ""
+                // td[0]: Week type (icon / text / tooltip / class)
+                val weekIcon = tds[0].select("i, span").firstOrNull()
+                var weekType = weekIcon?.attr("data-bs-title")?.trim() ?: ""
+                if (weekType.isBlank()) weekType = weekIcon?.attr("title")?.trim() ?: ""
+                if (weekType.isBlank()) {
+                    val tdHtml = tds[0].outerHtml()
+                    val tdClass = tds[0].className()
+                    val trId = tr.id()
+                    weekType = when {
+                        tdHtml.contains("fa-arrow-up") || trId.contains("week-up") || tdClass.contains("text-success") -> "Верхняя неделя"
+                        tdHtml.contains("fa-arrow-down") || trId.contains("week-down") || tdClass.contains("text-warning") -> "Нижняя неделя"
+                        tdHtml.contains("fa-repeat") || trId.contains("week-both") || tdClass.contains("text-info") -> "Обе недели"
+                        else -> tds[0].text().trim()
+                    }
+                }
 
-                val (subject, lessonType, subgroup) = if (tds.size > 4) parseSubjectCell(tds[4]) else Triple("", null, null)
+                // Columns:
+                // th=time, td[0]=week, td[1]=classroom, td[2]=group, td[3]=subject, td[4]=teacher
+                val classroom: String
+                val group: String
+                val subjectCell: Element?
+                val teacherTd: Element?
+
+                if (tds.size >= 5) {
+                    classroom = tds[1].text().trim()
+                    group = tds[2].text().trim()
+                    subjectCell = tds[3]
+                    teacherTd = tds[4]
+                } else if (tds.size == 4) {
+                    classroom = tds[1].text().trim()
+                    group = if (isTeacher) tds[2].text().trim() else ""
+                    subjectCell = if (isTeacher) tds[3] else tds[2]
+                    teacherTd = if (isTeacher) null else tds[3]
+                } else {
+                    classroom = if (tds.size > 1) tds[1].text().trim() else ""
+                    group = ""
+                    subjectCell = if (tds.size > 2) tds[2] else null
+                    teacherTd = if (tds.size > 3) tds[3] else null
+                }
+
+                val subjectInfo = if (subjectCell != null) parseSubjectCell(subjectCell) else SubjectParseResult("", null, null, "")
 
                 var teacherName = ""
                 var teacherId = ""
-                if (tds.size > 5) {
-                    val teacherTd = tds[5]
+                if (teacherTd != null) {
                     teacherName = teacherTd.text().trim()
-                    val tLinks = teacherTd.select("a")
-                    if (tLinks.isNotEmpty()) {
-                        val href = tLinks.first()?.attr("href") ?: ""
+                    val tLink = teacherTd.select("a").firstOrNull()
+                    if (tLink != null) {
+                        val href = tLink.attr("href")
                         teacherId = href.trim('/').split('/').lastOrNull() ?: ""
                     }
                 }
@@ -195,24 +269,26 @@ object SmtuWebParser {
                     Lesson(
                         time = timeStr,
                         weekType = weekType,
-                        dates = dates,
+                        dates = subjectInfo.dates,
                         classroom = classroom,
                         group = group,
-                        subject = subject,
-                        lessonType = lessonType,
-                        subgroup = subgroup,
+                        subject = subjectInfo.subject,
+                        lessonType = subjectInfo.lessonType,
+                        subgroup = subjectInfo.subgroup,
                         teacherName = teacherName,
                         teacherId = teacherId
                     )
                 )
             }
 
-            daysList.add(
-                DaySchedule(
-                    dayName = dayName,
-                    lessons = lessons
+            if (lessons.isNotEmpty() || dayBlocks.size <= 7) {
+                daysList.add(
+                    DaySchedule(
+                        dayName = dayName,
+                        lessons = lessons
+                    )
                 )
-            )
+            }
         }
 
         // If teacher schedule and title is generic, find teacher name from lessons
@@ -266,12 +342,20 @@ object SmtuWebParser {
         return match.value.trim('(', ')', '[', ']', ' ')
     }
 
-    private fun parseSubjectCell(td: Element): Triple<String, String?, String?> {
+    data class SubjectParseResult(
+        val subject: String,
+        val lessonType: String?,
+        val subgroup: String?,
+        val dates: String
+    )
+
+    private fun parseSubjectCell(td: Element): SubjectParseResult {
         val spanEl = td.select("span").firstOrNull()
         var rawSubject = spanEl?.text()?.trim() ?: ""
 
         var lessonType: String? = null
         var subgroup: String? = null
+        var dates = ""
 
         val smallElements = td.select("small")
         for (sm in smallElements) {
@@ -279,8 +363,14 @@ object SmtuWebParser {
             if (text.isBlank()) continue
             if (text.contains("п/г", ignoreCase = true) || text.contains("подгруппа", ignoreCase = true)) {
                 subgroup = text
-            } else if (lessonType == null) {
-                lessonType = text
+            } else if (lessonTypeRegex.containsMatchIn(text) || sm.className().contains("text-muted")) {
+                if (lessonType == null) {
+                    lessonType = text
+                }
+            } else if (Regex("\\d{2}\\.\\d{2}").containsMatchIn(text)) {
+                dates = text
+            } else if (rawSubject.isBlank()) {
+                rawSubject = text
             }
         }
 
@@ -288,6 +378,10 @@ object SmtuWebParser {
             val clone = td.clone()
             clone.select("small").remove()
             rawSubject = clone.text().trim()
+        }
+
+        if (rawSubject.isBlank()) {
+            rawSubject = td.text().trim()
         }
 
         if (lessonType == null) {
@@ -303,6 +397,6 @@ object SmtuWebParser {
             cleanSubj = td.text().trim()
         }
 
-        return Triple(cleanSubj, lessonType, subgroup)
+        return SubjectParseResult(cleanSubj, lessonType, subgroup, dates)
     }
 }
